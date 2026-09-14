@@ -1,22 +1,22 @@
-# ScreenLink
+# Concord
 
-Aplicativo desktop mínimo para compartilhar uma tela entre duas pessoas usando WebRTC.
+Aplicativo desktop para compartilhar uma tela entre amigos usando WebRTC.
 
 ## Executar localmente
 
-Em um terminal, inicie o servidor de sinalização:
+Crie um OAuth Client do tipo **Desktop app** no Google Cloud, copie `.env.example` para `.env` e informe o Client ID. Em seguida, inicie o servidor:
 
 ```bash
-npm run server
+GOOGLE_CLIENT_ID="seu-client-id.apps.googleusercontent.com" npm run server
 ```
 
 Em outro terminal, abra o aplicativo:
 
 ```bash
-npm start
+GOOGLE_CLIENT_ID="seu-client-id.apps.googleusercontent.com" npm start
 ```
 
-Para testar com dois computadores na mesma rede, inicie o servidor em um deles e informe, nos dois apps, o endereço `http://IP-DO-SERVIDOR:3000`. O apresentador cria uma sala e compartilha seu código; o espectador digita esse código para assistir.
+Para testar com dois computadores na mesma rede, inicie o servidor em um deles e informe, nos dois apps, o endereço `http://IP-DO-SERVIDOR:3000` em Conexão. Depois do login, os usuários podem encontrar contas que já entraram no servidor e enviar pedidos de amizade.
 
 ## Limites desta primeira versão
 

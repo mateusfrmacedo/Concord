@@ -1,27 +1,46 @@
 const $ = (id) => document.getElementById(id);
-const welcomeScreen = $('welcomeScreen'), roomScreen = $('roomScreen'), state = $('connectionState');
-const roomCode = $('roomCode'), roomCodeTop = $('copyRoomCode'), remoteVideo = $('remoteVideo'), localPreview = $('localPreview');
-const emptyStage = $('emptyStage'), emptyTitle = $('emptyTitle'), emptyCopy = $('emptyCopy'), streamBar = $('streamBar');
-let socket, peer, localStream, currentRoom, isHost = false, queuedCandidates = [];
+const loginScreen = $('loginScreen'), homeScreen = $('homeScreen'), roomScreen = $('roomScreen');
+const state = $('connectionState'), roomCode = $('roomCode'), roomCodeTop = $('copyRoomCode');
+const remoteVideo = $('remoteVideo'), localPreview = $('localPreview'), emptyStage = $('emptyStage'), emptyTitle = $('emptyTitle'), streamBar = $('streamBar');
+let socket, peer, localStream, currentRoom, isHost = false, queuedCandidates = [], idToken, friendState;
 
 function setState(message, kind = '') { state.textContent = message; state.className = `connection-state ${kind}`; }
 function makeRoomCode() { return crypto.getRandomValues(new Uint32Array(1))[0].toString(36).slice(0, 6).toUpperCase(); }
-function toast(message) { const node = $('toast'); node.textContent = message; node.classList.remove('hidden'); clearTimeout(toast.timer); toast.timer = setTimeout(() => node.classList.add('hidden'), 2600); }
-function signalingUrl() { return $('serverUrl').value.trim().replace(/\/$/, ''); }
+function toast(message) { const node = $('toast'); node.textContent = message; node.classList.remove('hidden'); clearTimeout(toast.timer); toast.timer = setTimeout(() => node.classList.add('hidden'), 2800); }
+function serverUrl() { return $('homeServerUrl').value.trim().replace(/\/$/, ''); }
+function escape(value = '') { return String(value).replace(/[&<>"']/g, (character) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[character]); }
+function avatar(user, className = 'friend-avatar') { return `<img class="${className}" src="${escape(user.picture || '')}" alt="" />`; }
+async function api(path, options = {}) {
+  const response = await fetch(`${serverUrl()}${path}`, { ...options, headers: { authorization: `Bearer ${idToken}`, 'content-type': 'application/json', ...(options.headers || {}) } });
+  const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Não foi possível concluir a ação.'); return data;
+}
+function syncServerUrl(source) { const target = source === $('serverUrl') ? $('homeServerUrl') : $('serverUrl'); target.value = source.value; }
+function renderFriends(data) {
+  friendState = data; $('accountPicture').src = data.profile.picture || ''; $('accountName').textContent = data.profile.name; $('accountEmail').textContent = data.profile.email;
+  const list = $('friends'); list.innerHTML = data.friends.length ? data.friends.map((friend) => `<div class="friend-row">${avatar(friend)}<div><strong>${escape(friend.name)}</strong><small>${escape(friend.email)}</small></div></div>`).join('') : '<p class="empty-list">Nenhum amigo ainda.</p>';
+  const requests = $('requests'); $('requestsSection').classList.toggle('hidden', !data.incoming.length);
+  requests.innerHTML = data.incoming.map((friend) => `<div class="request-row">${avatar(friend)}<div><strong>${escape(friend.name)}</strong><small>${escape(friend.email)}</small></div><button data-accept="${escape(friend.id)}">Aceitar</button></div>`).join('');
+  requests.querySelectorAll('[data-accept]').forEach((button) => button.addEventListener('click', async () => { try { renderFriends(await api('/api/friends/accept', { method: 'POST', body: JSON.stringify({ userId: button.dataset.accept }) })); } catch (error) { toast(error.message); } }));
+}
+async function enterHome() { renderFriends(await api('/api/me', { method: 'POST', body: '{}' })); loginScreen.classList.add('hidden'); homeScreen.classList.remove('hidden'); await window.concord.setWindowMode('home'); }
+async function googleLogin() {
+  const button = $('googleLogin'); button.disabled = true; $('loginStatus').textContent = 'Abrindo Google…';
+  try { const result = await window.concord.signInWithGoogle(); idToken = result.idToken; await enterHome(); }
+  catch (error) { $('loginStatus').textContent = error.message; }
+  finally { button.disabled = false; }
+}
 function showRoom() {
-  welcomeScreen.classList.add('hidden'); roomScreen.classList.remove('hidden'); roomCode.textContent = currentRoom; roomCodeTop.textContent = currentRoom;
-  $('hostControls').classList.toggle('hidden', !isHost); $('viewerNote').classList.toggle('hidden', isHost);
-  emptyTitle.textContent = isHost ? 'Pronto para compartilhar' : 'Aguardando compartilhamento';
-  emptyCopy.textContent = isHost ? 'Clique em “Compartilhar tela” quando estiver pronto.' : 'A tela aparecerá aqui quando o apresentador iniciar a transmissão.';
+  homeScreen.classList.add('hidden'); roomScreen.classList.remove('hidden'); roomCode.textContent = currentRoom; roomCodeTop.textContent = currentRoom;
+  $('hostControls').classList.toggle('hidden', !isHost); $('viewerNote').classList.toggle('hidden', isHost); emptyTitle.textContent = isHost ? 'Pronto para compartilhar' : 'Aguardando'; window.concord.setWindowMode('home');
 }
 function connectToRoom(room, host) {
-  if (!signalingUrl()) return toast('Informe o endereço do servidor.'); currentRoom = room; isHost = host; showRoom(); setState('Conectando…');
-  socket = io(signalingUrl(), { transports: ['websocket'] });
+  if (!serverUrl()) return toast('Defina o servidor em Conexão.'); currentRoom = room; isHost = host; showRoom(); setState('Conectando');
+  socket = io(serverUrl(), { transports: ['websocket'] });
   socket.on('connect', () => { socket.emit('join-room', { room, role: host ? 'host' : 'viewer' }); setState('Na sala', 'ready'); });
   socket.on('connect_error', () => setState('Servidor indisponível', 'error'));
-  socket.on('room-full', () => { toast('Esta sala já tem um apresentador e um espectador.'); leaveRoom(); });
+  socket.on('room-full', () => { toast('Esta sala já está cheia.'); leaveRoom(); });
   socket.on('peer-joined', async () => { if (isHost) { await ensurePeer(); await createOffer(); } });
-  socket.on('peer-left', () => { peer?.close(); peer = undefined; queuedCandidates = []; remoteVideo.srcObject = null; if (!localStream) emptyStage.classList.remove('hidden'); toast('A outra pessoa saiu da sala.'); });
+  socket.on('peer-left', () => { peer?.close(); peer = undefined; queuedCandidates = []; remoteVideo.srcObject = null; if (!localStream) emptyStage.classList.remove('hidden'); toast('A outra pessoa saiu.'); });
   socket.on('signal', handleSignal);
 }
 async function ensurePeer() {
@@ -29,9 +48,8 @@ async function ensurePeer() {
   peer = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
   peer.onicecandidate = ({ candidate }) => { if (candidate) socket.emit('signal', { room: currentRoom, data: { candidate } }); };
   peer.ontrack = ({ streams }) => { remoteVideo.srcObject = streams[0]; emptyStage.classList.add('hidden'); streamBar.classList.remove('hidden'); };
-  peer.onconnectionstatechange = () => { if (peer?.connectionState === 'connected') setState('Conectado', 'ready'); if (['failed','disconnected'].includes(peer?.connectionState)) setState('Reconectando…'); };
-  if (localStream) localStream.getTracks().forEach((track) => peer.addTrack(track, localStream));
-  return peer;
+  peer.onconnectionstatechange = () => { if (peer?.connectionState === 'connected') setState('Conectado', 'ready'); if (['failed','disconnected'].includes(peer?.connectionState)) setState('Reconectando'); };
+  if (localStream) localStream.getTracks().forEach((track) => peer.addTrack(track, localStream)); return peer;
 }
 async function createOffer() { if (!isHost || !socket?.connected) return; const connection = await ensurePeer(); const offer = await connection.createOffer(); await connection.setLocalDescription(offer); socket.emit('signal', { room: currentRoom, data: { description: connection.localDescription } }); }
 async function handleSignal({ data }) {
@@ -39,21 +57,15 @@ async function handleSignal({ data }) {
   if (data.candidate) { if (peer?.remoteDescription) await peer.addIceCandidate(data.candidate); else queuedCandidates.push(data.candidate); }
 }
 async function startShare() {
-  try {
-    localStream = await navigator.mediaDevices.getDisplayMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 30 } }, audio: true });
-    localPreview.srcObject = localStream; localPreview.style.display = 'block'; emptyStage.classList.add('hidden'); streamBar.classList.remove('hidden'); $('startShare').classList.add('hidden'); $('stopShare').classList.remove('hidden');
-    localStream.getVideoTracks()[0].addEventListener('ended', stopShare);
-    if (peer) { localStream.getTracks().forEach((track) => peer.addTrack(track, localStream)); await createOffer(); }
-  } catch (error) { if (error.name !== 'NotAllowedError') toast('Não foi possível iniciar o compartilhamento.'); }
+  try { localStream = await navigator.mediaDevices.getDisplayMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 30 } }, audio: true }); localPreview.srcObject = localStream; localPreview.style.display = 'block'; emptyStage.classList.add('hidden'); streamBar.classList.remove('hidden'); $('startShare').classList.add('hidden'); $('stopShare').classList.remove('hidden'); localStream.getVideoTracks()[0].addEventListener('ended', stopShare); if (peer) { localStream.getTracks().forEach((track) => peer.addTrack(track, localStream)); await createOffer(); } }
+  catch (error) { if (error.name !== 'NotAllowedError') toast('Não foi possível compartilhar a tela.'); }
 }
-function stopShare() {
-  localStream?.getTracks().forEach((track) => track.stop()); localStream = undefined;
-  peer?.getSenders().filter((sender) => sender.track).forEach((sender) => peer.removeTrack(sender));
-  createOffer().catch(() => {});
-  localPreview.srcObject = null; localPreview.style.display = 'none'; streamBar.classList.add('hidden'); $('startShare').classList.remove('hidden'); $('stopShare').classList.add('hidden'); emptyStage.classList.remove('hidden'); emptyTitle.textContent = 'Transmissão encerrada'; emptyCopy.textContent = 'Você pode iniciar um novo compartilhamento quando quiser.';
-}
-function leaveRoom() { stopShare(); socket?.disconnect(); socket = undefined; peer?.close(); peer = undefined; remoteVideo.srcObject = null; roomScreen.classList.add('hidden'); welcomeScreen.classList.remove('hidden'); }
-$('createRoom').addEventListener('click', () => connectToRoom(makeRoomCode(), true));
-$('joinRoomForm').addEventListener('submit', (event) => { event.preventDefault(); const code = $('roomCodeInput').value.trim().toUpperCase(); if (code.length < 3) return toast('Digite o código da sala.'); connectToRoom(code, false); });
-$('startShare').addEventListener('click', startShare); $('stopShare').addEventListener('click', stopShare); $('leaveRoom').addEventListener('click', leaveRoom);
+function stopShare() { localStream?.getTracks().forEach((track) => track.stop()); localStream = undefined; peer?.getSenders().filter((sender) => sender.track).forEach((sender) => peer.removeTrack(sender)); createOffer().catch(() => {}); localPreview.srcObject = null; localPreview.style.display = 'none'; streamBar.classList.add('hidden'); $('startShare').classList.remove('hidden'); $('stopShare').classList.add('hidden'); emptyStage.classList.remove('hidden'); emptyTitle.textContent = 'Encerrado'; }
+function leaveRoom() { stopShare(); socket?.disconnect(); socket = undefined; peer?.close(); peer = undefined; remoteVideo.srcObject = null; roomScreen.classList.add('hidden'); homeScreen.classList.remove('hidden'); }
+
+$('googleLogin').addEventListener('click', googleLogin);
+$('serverUrl').addEventListener('input', (event) => syncServerUrl(event.target)); $('homeServerUrl').addEventListener('input', (event) => syncServerUrl(event.target));
+$('signOut').addEventListener('click', async () => { idToken = undefined; friendState = undefined; homeScreen.classList.add('hidden'); loginScreen.classList.remove('hidden'); $('loginStatus').textContent = ''; await window.concord.setWindowMode('login'); });
+$('friendSearch').addEventListener('submit', async (event) => { event.preventDefault(); const query = $('friendQuery').value.trim(); if (!query) return; try { const { users } = await api(`/api/users?q=${encodeURIComponent(query)}`); const results = $('searchResults'); results.classList.remove('hidden'); results.innerHTML = users.length ? users.map((user) => `<div class="result">${avatar(user)}<div><strong>${escape(user.name)}</strong><small>${escape(user.email)}</small></div><button data-user="${escape(user.id)}">Adicionar</button></div>`).join('') : '<p class="empty-list">Nenhum resultado.</p>'; results.querySelectorAll('[data-user]').forEach((button) => button.addEventListener('click', async () => { try { await api('/api/friends/request', { method: 'POST', body: JSON.stringify({ userId: button.dataset.user }) }); toast('Pedido enviado.'); button.textContent = 'Enviado'; button.disabled = true; } catch (error) { toast(error.message); } })); } catch (error) { toast(error.message); } });
+$('createRoom').addEventListener('click', () => connectToRoom(makeRoomCode(), true)); $('startShare').addEventListener('click', startShare); $('stopShare').addEventListener('click', stopShare); $('leaveRoom').addEventListener('click', leaveRoom);
 [$('copyRoomCode'), $('copyRoomCodeLarge')].forEach((button) => button.addEventListener('click', async () => { await navigator.clipboard.writeText(currentRoom); toast('Código copiado.'); }));

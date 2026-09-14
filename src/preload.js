@@ -1,2 +1,5 @@
-const { contextBridge } = require('electron');
-contextBridge.exposeInMainWorld('screenlink', { platform: process.platform });
+const { contextBridge, ipcRenderer } = require('electron');
+contextBridge.exposeInMainWorld('concord', {
+  signInWithGoogle: () => ipcRenderer.invoke('auth:google'),
+  setWindowMode: (mode) => ipcRenderer.invoke('window:mode', mode)
+});

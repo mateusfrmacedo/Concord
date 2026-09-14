@@ -1,7 +1,7 @@
 {
-  "name": "screenlink",
+  "name": "concord",
   "version": "0.1.0",
-  "description": "Compartilhamento de tela simples para Windows e macOS.",
+  "description": "Compartilhamento de tela com amigos.",
   "main": "src/main.js",
   "scripts": {
     "start": "node ./node_modules/electron/cli.js .",
@@ -16,12 +16,13 @@
     "png-to-ico": "^3.0.2"
   },
   "dependencies": {
+    "dotenv": "^17.4.2",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1"
   },
   "build": {
-    "appId": "com.screenlink.app",
-    "productName": "ScreenLink",
+    "appId": "com.concord.app",
+    "productName": "Concord",
     "files": [
       "src/**/*",
       "icon.png",

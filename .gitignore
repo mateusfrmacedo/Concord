@@ -3,3 +3,5 @@ dist/
 .DS_Store
 Referencia/
 build/icon.iconset/
+data/
+.env
