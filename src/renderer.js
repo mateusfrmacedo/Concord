@@ -7,14 +7,13 @@ let socket, peer, localStream, currentRoom, isHost = false, queuedCandidates = [
 function setState(message, kind = '') { state.textContent = message; state.className = `connection-state ${kind}`; }
 function makeRoomCode() { return crypto.getRandomValues(new Uint32Array(1))[0].toString(36).slice(0, 6).toUpperCase(); }
 function toast(message) { const node = $('toast'); node.textContent = message; node.classList.remove('hidden'); clearTimeout(toast.timer); toast.timer = setTimeout(() => node.classList.add('hidden'), 2800); }
-function serverUrl() { return $('homeServerUrl').value.trim().replace(/\/$/, ''); }
+function serverUrl() { return 'https://screen-share-server-production-cb9e.up.railway.app'; }
 function escape(value = '') { return String(value).replace(/[&<>"']/g, (character) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[character]); }
 function avatar(user, className = 'friend-avatar') { return `<img class="${className}" src="${escape(user.picture || '')}" alt="" />`; }
 async function api(path, options = {}) {
   const response = await fetch(`${serverUrl()}${path}`, { ...options, headers: { authorization: `Bearer ${authToken}`, 'content-type': 'application/json', ...(options.headers || {}) } });
   const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Não foi possível concluir a ação.'); return data;
 }
-function syncServerUrl(source) { const target = source === $('serverUrl') ? $('homeServerUrl') : $('serverUrl'); target.value = source.value; }
 function renderFriends(data) {
   friendState = data; $('accountPicture').src = data.profile.picture || ''; $('accountName').textContent = data.profile.name; $('accountEmail').textContent = data.profile.email;
   const list = $('friends'); list.innerHTML = data.friends.length ? data.friends.map((friend) => `<div class="friend-row">${avatar(friend)}<div><strong>${escape(friend.name)}</strong><small>${escape(friend.email)}</small></div></div>`).join('') : '<p class="empty-list">Nenhum amigo ainda.</p>';
@@ -34,7 +33,7 @@ function showRoom() {
   $('hostControls').classList.toggle('hidden', !isHost); $('viewerNote').classList.toggle('hidden', isHost); emptyTitle.textContent = isHost ? 'Pronto para compartilhar' : 'Aguardando'; window.desktop.setWindowMode('home');
 }
 function connectToRoom(room, host) {
-  if (!serverUrl()) return toast('Defina o servidor em Conexão.'); currentRoom = room; isHost = host; showRoom(); setState('Conectando');
+  if (!serverUrl()) return toast('Servidor indisponível.'); currentRoom = room; isHost = host; showRoom(); setState('Conectando');
   socket = io(serverUrl(), { transports: ['websocket'] });
   socket.on('connect', () => { socket.emit('join-room', { room, role: host ? 'host' : 'viewer' }); setState('Na sala', 'ready'); });
   socket.on('connect_error', () => setState('Servidor indisponível', 'error'));
@@ -64,7 +63,6 @@ function stopShare() { localStream?.getTracks().forEach((track) => track.stop())
 function leaveRoom() { stopShare(); socket?.disconnect(); socket = undefined; peer?.close(); peer = undefined; remoteVideo.srcObject = null; roomScreen.classList.add('hidden'); homeScreen.classList.remove('hidden'); }
 
 $('discordLogin').addEventListener('click', oauthLogin);
-$('serverUrl').addEventListener('input', (event) => syncServerUrl(event.target)); $('homeServerUrl').addEventListener('input', (event) => syncServerUrl(event.target));
 $('signOut').addEventListener('click', async () => { authToken = undefined; friendState = undefined; homeScreen.classList.add('hidden'); loginScreen.classList.remove('hidden'); $('loginStatus').textContent = ''; await window.desktop.setWindowMode('login'); });
 $('friendSearch').addEventListener('submit', async (event) => { event.preventDefault(); const query = $('friendQuery').value.trim(); if (!query) return; try { const { users } = await api(`/api/users?q=${encodeURIComponent(query)}`); const results = $('searchResults'); results.classList.remove('hidden'); results.innerHTML = users.length ? users.map((user) => `<div class="result">${avatar(user)}<div><strong>${escape(user.name)}</strong><small>${escape(user.email)}</small></div><button data-user="${escape(user.id)}">Adicionar</button></div>`).join('') : '<p class="empty-list">Nenhum resultado.</p>'; results.querySelectorAll('[data-user]').forEach((button) => button.addEventListener('click', async () => { try { await api('/api/friends/request', { method: 'POST', body: JSON.stringify({ userId: button.dataset.user }) }); toast('Pedido enviado.'); button.textContent = 'Enviado'; button.disabled = true; } catch (error) { toast(error.message); } })); } catch (error) { toast(error.message); } });
 $('createRoom').addEventListener('click', () => connectToRoom(makeRoomCode(), true)); $('startShare').addEventListener('click', startShare); $('stopShare').addEventListener('click', stopShare); $('leaveRoom').addEventListener('click', leaveRoom);
