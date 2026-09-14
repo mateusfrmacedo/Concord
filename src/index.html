@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>ScreenLink</title><link rel="stylesheet" href="styles.css" /></head>
+<body><main class="app-shell">
+  <header class="app-header"><a class="logo" href="#"><img src="../icon.png" alt="" />ScreenLink</a></header>
+  <section class="welcome screen" id="welcomeScreen">
+    <div class="action-stack">
+      <button class="primary-action" id="createRoom">Compartilhar tela</button>
+      <div class="separator"><span>ou</span></div>
+      <form class="join-form" id="joinRoomForm"><input id="roomCodeInput" maxlength="6" placeholder="Código da sala" aria-label="Código da sala" /><button class="secondary-action" type="submit">Entrar</button></form>
+      <details class="connection-settings"><summary>Configurar conexão</summary><input id="serverUrl" value="http://localhost:3000" autocomplete="url" aria-label="Endereço do servidor" /></details>
+    </div>
+  </section>
+  <section class="room screen hidden" id="roomScreen">
+    <div class="room-topbar"><button class="back-button" id="leaveRoom" aria-label="Sair">‹</button><div class="room-id"><span>SALA</span><button id="copyRoomCode" title="Copiar código da sala">------</button></div><span class="connection-state" id="connectionState">Conectando</span></div>
+    <div class="share-layout"><section class="stage"><video id="remoteVideo" autoplay playsinline></video><video id="localPreview" autoplay muted playsinline></video><div class="empty-stage" id="emptyStage"><h2 id="emptyTitle">Aguardando</h2><p id="emptyCopy"></p></div><div class="stream-bar hidden" id="streamBar"><span><i></i> AO VIVO</span><span>1080p · 30 FPS</span></div></section>
+    <aside class="room-sidebar"><section class="room-card"><span class="label">CÓDIGO</span><strong id="roomCode">------</strong><button class="copy-button" id="copyRoomCodeLarge">Copiar</button></section><div class="host-controls hidden" id="hostControls"><button class="primary-action" id="startShare">Compartilhar tela</button><button class="stop-button hidden" id="stopShare">Encerrar</button></div><div class="viewer-note hidden" id="viewerNote">Aguardando apresentador</div></aside></div>
+  </section>
+</main><div class="toast hidden" id="toast" role="status"></div><script src="../node_modules/socket.io-client/dist/socket.io.min.js"></script><script src="renderer.js"></script></body></html>

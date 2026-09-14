@@ -1,0 +1,40 @@
+{
+  "name": "screenlink",
+  "version": "0.1.0",
+  "description": "Compartilhamento de tela simples para Windows e macOS.",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "node ./node_modules/electron/cli.js .",
+    "dev": "node ./node_modules/electron/cli.js .",
+    "server": "node server.js",
+    "pack": "node ./node_modules/electron-builder/cli.js --dir",
+    "dist": "node ./node_modules/electron-builder/cli.js"
+  },
+  "devDependencies": {
+    "electron": "^35.1.5",
+    "electron-builder": "^26.0.12",
+    "png-to-ico": "^3.0.2"
+  },
+  "dependencies": {
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1"
+  },
+  "build": {
+    "appId": "com.screenlink.app",
+    "productName": "ScreenLink",
+    "files": [
+      "src/**/*",
+      "icon.png",
+      "server.js",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.social-networking",
+      "icon": "build/icon.icns"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    }
+  }
+}
