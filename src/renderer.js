@@ -1,12 +1,27 @@
 const $ = (id) => document.getElementById(id);
 const loginScreen = $('loginScreen'), homeScreen = $('homeScreen'), roomScreen = $('roomScreen');
 const state = $('connectionState'), roomCode = $('roomCode'), roomCodeTop = $('copyRoomCode');
-const remoteVideo = $('remoteVideo'), localPreview = $('localPreview'), emptyStage = $('emptyStage'), emptyTitle = $('emptyTitle'), streamBar = $('streamBar');
-let socket, peer, localStream, currentRoom, isHost = false, queuedCandidates = [], authToken, friendState;
+const remoteVideo = $('remoteVideo'), localPreview = $('localPreview'), emptyStage = $('emptyStage'), emptyTitle = $('emptyTitle'), streamBar = $('streamBar'), stage = $('stage'), streamQuality = $('streamQuality');
+const qualityProfiles = {
+  auto: { label: 'Automática', video: { frameRate: { ideal: 30, max: 60 } } },
+  1080: { label: '1080p · 30 FPS', video: { width: { ideal: 1920, max: 1920 }, height: { ideal: 1080, max: 1080 }, frameRate: { ideal: 30, max: 30 } }, maxBitrate: 4500000 },
+  720: { label: '720p · 30 FPS', video: { width: { ideal: 1280, max: 1280 }, height: { ideal: 720, max: 720 }, frameRate: { ideal: 30, max: 30 } }, maxBitrate: 2500000 },
+  480: { label: '480p · 30 FPS', video: { width: { ideal: 854, max: 854 }, height: { ideal: 480, max: 480 }, frameRate: { ideal: 30, max: 30 } }, maxBitrate: 1200000 }
+};
+let socket, peer, localStream, remoteStream, currentRoom, isHost = false, queuedCandidates = [], authToken, friendState, activeQuality = 'auto';
 
 function setState(message, kind = '') { state.textContent = message; state.className = `connection-state ${kind}`; }
 function makeRoomCode() { return crypto.getRandomValues(new Uint32Array(1))[0].toString(36).slice(0, 6).toUpperCase(); }
 function toast(message) { const node = $('toast'); node.textContent = message; node.classList.remove('hidden'); clearTimeout(toast.timer); toast.timer = setTimeout(() => node.classList.add('hidden'), 2800); }
+function updateStage() {
+  const hasLocal = Boolean(localStream?.getVideoTracks().some((track) => track.readyState === 'live'));
+  const hasRemote = Boolean(remoteStream?.getVideoTracks().some((track) => track.readyState === 'live' && !track.muted));
+  stage.classList.toggle('has-local', hasLocal); stage.classList.toggle('has-remote', hasRemote);
+  emptyStage.classList.toggle('hidden', hasLocal || hasRemote); streamBar.classList.toggle('hidden', !hasLocal && !hasRemote);
+  if (hasLocal && hasRemote) { localPreview.style.cssText = 'display:block;inset:auto 14px 14px auto;width:180px;height:104px;z-index:2;border:1px solid #ffffff66;border-radius:8px;background:#1d1d1f;box-shadow:0 5px 16px #0004;'; }
+  else { localPreview.style.cssText = hasLocal ? 'display:block;' : 'display:none;'; }
+  streamQuality.textContent = hasLocal ? qualityProfiles[activeQuality].label : 'Tela do amigo';
+}
 function serverUrl() { return 'https://screen-share-server-production-cb9e.up.railway.app'; }
 function escape(value = '') { return String(value).replace(/[&<>"']/g, (character) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[character]); }
 function avatar(user, className = 'friend-avatar') { return `<img class="${className}" src="${escape(user.picture || '')}" alt="" />`; }
@@ -31,7 +46,7 @@ async function oauthLogin() {
 }
 function showRoom() {
   homeScreen.classList.add('hidden'); roomScreen.classList.remove('hidden'); roomCode.textContent = currentRoom; roomCodeTop.textContent = currentRoom;
-  $('hostControls').classList.toggle('hidden', !isHost); $('viewerNote').classList.toggle('hidden', isHost); emptyTitle.textContent = isHost ? 'Pronto para compartilhar' : 'Aguardando'; window.desktop.setWindowMode('home');
+  emptyTitle.textContent = 'Aguardando compartilhamento'; updateStage(); window.desktop.setWindowMode('home');
 }
 function joinCurrentRoom() { if (socket?.connected && currentRoom) { socket.emit('join-room', { room: currentRoom, role: isHost ? 'host' : 'viewer' }); setState('Na sala', 'ready'); } }
 function connectSocket() {
@@ -40,7 +55,7 @@ function connectSocket() {
   socket.on('connect_error', () => setState('Servidor indisponível', 'error'));
   socket.on('room-full', () => { toast('Esta sala já está cheia.'); leaveRoom(); });
   socket.on('peer-joined', async () => { if (isHost) { await ensurePeer(); await createOffer(); } });
-  socket.on('peer-left', () => { peer?.close(); peer = undefined; queuedCandidates = []; remoteVideo.srcObject = null; if (!localStream) emptyStage.classList.remove('hidden'); toast('A outra pessoa saiu.'); });
+  socket.on('peer-left', () => { peer?.close(); peer = undefined; queuedCandidates = []; remoteStream = undefined; remoteVideo.srcObject = null; updateStage(); toast('A outra pessoa saiu.'); });
   socket.on('signal', handleSignal);
   socket.on('presence-update', ({ userId, online }) => { if (!friendState) return; const friend = friendState.friends.find((item) => item.id === userId); if (friend) { friend.online = online; renderFriends(friendState); } });
   socket.on('share-invite', ({ from, room }) => { if (window.confirm(`${from.name} quer compartilhar a tela com você. Aceitar?`)) connectToRoom(room, false); });
@@ -50,13 +65,26 @@ function connectToRoom(room, host) {
   if (!serverUrl()) return toast('Servidor indisponível.'); currentRoom = room; isHost = host; showRoom(); setState('Conectando');
   if (!socket) connectSocket(); else joinCurrentRoom();
 }
+function transceiverFor(kind) { return peer?.getTransceivers().find((transceiver) => transceiver.receiver.track.kind === kind); }
+async function syncLocalTracks() {
+  if (!peer) return;
+  const videoTrack = localStream?.getVideoTracks()[0] || null, audioTrack = localStream?.getAudioTracks()[0] || null;
+  await transceiverFor('video')?.sender.replaceTrack(videoTrack);
+  await transceiverFor('audio')?.sender.replaceTrack(audioTrack);
+  const videoSender = transceiverFor('video')?.sender;
+  if (videoSender) {
+    const parameters = videoSender.getParameters();
+    if (parameters.encodings?.length) { const maximum = qualityProfiles[activeQuality].maxBitrate; if (maximum) parameters.encodings[0].maxBitrate = maximum; else delete parameters.encodings[0].maxBitrate; await videoSender.setParameters(parameters).catch(() => {}); }
+  }
+}
 async function ensurePeer() {
   if (peer) return peer;
   peer = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+  peer.addTransceiver('video', { direction: 'sendrecv' }); peer.addTransceiver('audio', { direction: 'sendrecv' });
   peer.onicecandidate = ({ candidate }) => { if (candidate) socket.emit('signal', { room: currentRoom, data: { candidate } }); };
-  peer.ontrack = ({ streams }) => { remoteVideo.srcObject = streams[0]; emptyStage.classList.add('hidden'); streamBar.classList.remove('hidden'); };
+  peer.ontrack = ({ streams, track }) => { remoteStream = streams[0] || remoteStream || new MediaStream(); if (!streams[0] && !remoteStream.getTracks().some((item) => item.id === track.id)) remoteStream.addTrack(track); remoteVideo.srcObject = remoteStream; track.addEventListener('mute', updateStage); track.addEventListener('unmute', updateStage); track.addEventListener('ended', updateStage); updateStage(); };
   peer.onconnectionstatechange = () => { if (peer?.connectionState === 'connected') setState('Conectado', 'ready'); if (['failed','disconnected'].includes(peer?.connectionState)) setState('Reconectando'); };
-  if (localStream) localStream.getTracks().forEach((track) => peer.addTrack(track, localStream)); return peer;
+  await syncLocalTracks(); return peer;
 }
 async function createOffer() { if (!isHost || !socket?.connected) return; const connection = await ensurePeer(); const offer = await connection.createOffer(); await connection.setLocalDescription(offer); socket.emit('signal', { room: currentRoom, data: { description: connection.localDescription } }); }
 async function handleSignal({ data }) {
@@ -64,11 +92,14 @@ async function handleSignal({ data }) {
   if (data.candidate) { if (peer?.remoteDescription) await peer.addIceCandidate(data.candidate); else queuedCandidates.push(data.candidate); }
 }
 async function startShare() {
-  try { localStream = await navigator.mediaDevices.getDisplayMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 30 } }, audio: true }); localPreview.srcObject = localStream; localPreview.style.display = 'block'; emptyStage.classList.add('hidden'); streamBar.classList.remove('hidden'); $('startShare').classList.add('hidden'); $('stopShare').classList.remove('hidden'); localStream.getVideoTracks()[0].addEventListener('ended', stopShare); if (peer) { localStream.getTracks().forEach((track) => peer.addTrack(track, localStream)); await createOffer(); } }
-  catch (error) { if (error.name !== 'NotAllowedError') toast('Não foi possível compartilhar a tela.'); }
+  try {
+    activeQuality = $('quality').value; const profile = qualityProfiles[activeQuality];
+    localStream = await navigator.mediaDevices.getDisplayMedia({ video: profile.video, audio: true }); localPreview.srcObject = localStream;
+    $('quality').disabled = true; $('startShare').classList.add('hidden'); $('stopShare').classList.remove('hidden'); localStream.getVideoTracks()[0].addEventListener('ended', stopShare); await syncLocalTracks(); updateStage();
+  } catch (error) { if (error.name !== 'NotAllowedError') toast('Não foi possível compartilhar a tela.'); }
 }
-function stopShare() { localStream?.getTracks().forEach((track) => track.stop()); localStream = undefined; peer?.getSenders().filter((sender) => sender.track).forEach((sender) => peer.removeTrack(sender)); createOffer().catch(() => {}); localPreview.srcObject = null; localPreview.style.display = 'none'; streamBar.classList.add('hidden'); $('startShare').classList.remove('hidden'); $('stopShare').classList.add('hidden'); emptyStage.classList.remove('hidden'); emptyTitle.textContent = 'Encerrado'; }
-function leaveRoom() { stopShare(); socket?.emit('leave-room'); peer?.close(); peer = undefined; remoteVideo.srcObject = null; currentRoom = undefined; roomScreen.classList.add('hidden'); homeScreen.classList.remove('hidden'); }
+async function stopShare() { localStream?.getTracks().forEach((track) => track.stop()); localStream = undefined; await syncLocalTracks().catch(() => {}); localPreview.srcObject = null; $('quality').disabled = false; $('startShare').classList.remove('hidden'); $('stopShare').classList.add('hidden'); emptyTitle.textContent = 'Aguardando compartilhamento'; updateStage(); }
+function leaveRoom() { stopShare(); socket?.emit('leave-room'); peer?.close(); peer = undefined; remoteStream = undefined; remoteVideo.srcObject = null; currentRoom = undefined; roomScreen.classList.add('hidden'); homeScreen.classList.remove('hidden'); }
 
 $('discordLogin').addEventListener('click', oauthLogin);
 $('signOut').addEventListener('click', async () => { socket?.disconnect(); socket = undefined; authToken = undefined; friendState = undefined; homeScreen.classList.add('hidden'); loginScreen.classList.remove('hidden'); $('loginStatus').textContent = ''; await window.desktop.setWindowMode('login'); });
