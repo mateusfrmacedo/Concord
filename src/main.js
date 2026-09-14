@@ -1,4 +1,3 @@
-require('dotenv').config();
 const { app, BrowserWindow, session, shell, ipcMain } = require('electron');
 const crypto = require('node:crypto');
 const http = require('node:http');
@@ -12,42 +11,40 @@ function createWindow() {
 }
 function base64Url(value) { return value.toString('base64url'); }
 
-async function receiveAuthorizationCode({ clientId, authorizationEndpoint, scope, extra = {}, redirectUri }) {
+async function signInWithDiscord(serverUrl) {
+  let origin;
+  try { origin = new URL(serverUrl); } catch { throw new Error('Informe o endereço do servidor.'); }
+  if (!['http:', 'https:'].includes(origin.protocol)) throw new Error('O endereço do servidor deve começar com http:// ou https://.');
+  origin.pathname = origin.pathname.replace(/\/$/, ''); origin.search = ''; origin.hash = '';
   const state = base64Url(crypto.randomBytes(32));
-  const target = redirectUri ? new URL(redirectUri) : new URL('http://127.0.0.1:0/oauth/callback');
   return new Promise((resolve, reject) => {
     const server = http.createServer((request, response) => {
-      const received = new URL(request.url, `http://${target.hostname}`);
-      if (received.pathname !== target.pathname) return response.writeHead(404).end();
-      const callbackPort = server.address().port;
-      const code = received.searchParams.get('code'), returnedState = received.searchParams.get('state'), error = received.searchParams.get('error');
+      const received = new URL(request.url, 'http://127.0.0.1');
+      if (received.pathname !== '/oauth/callback') return response.writeHead(404).end();
+      const ticket = received.searchParams.get('ticket'), returnedState = received.searchParams.get('state'), error = received.searchParams.get('error');
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end('<!doctype html><meta charset="utf-8"><body style="font-family:-apple-system;text-align:center;padding:64px">Login concluído. Você pode fechar esta aba.</body>');
       server.close();
-      if (error) reject(new Error(error)); else if (returnedState !== state || !code) reject(new Error('A validação do login falhou.'));
-      else resolve({ code, redirectUri: `${target.protocol}//${target.hostname}:${callbackPort}${target.pathname}` });
+      if (error) return reject(new Error(error));
+      if (returnedState !== state || !ticket) return reject(new Error('A validação do login falhou.'));
+      fetch(new URL(`/oauth/discord/ticket?ticket=${encodeURIComponent(ticket)}`, origin).toString()).then(async (result) => {
+        const body = await result.json(); if (!result.ok || !body.token) throw new Error(body.error || 'Não foi possível concluir o login.'); return body;
+      }).then((body) => resolve({ provider: 'discord', token: body.token }), reject);
     });
-    server.listen(Number(target.port) || 0, target.hostname, async () => {
+    server.listen(0, '127.0.0.1', async () => {
       const port = server.address().port;
-      const callback = `${target.protocol}//${target.hostname}:${port}${target.pathname}`;
-      const authorizationUrl = new URL(authorizationEndpoint);
-      authorizationUrl.search = new URLSearchParams({ client_id: clientId, redirect_uri: callback, response_type: 'code', scope, state, ...extra }).toString();
+      const callback = `http://127.0.0.1:${port}/oauth/callback`;
+      const authorizationUrl = new URL('/oauth/discord/start', origin);
+      authorizationUrl.search = new URLSearchParams({ state, return_to: callback }).toString();
       try { await shell.openExternal(authorizationUrl.toString()); } catch (error) { server.close(); reject(error); }
     });
     setTimeout(() => { server.close(); reject(new Error('O login expirou.')); }, 300000).unref();
   });
 }
-async function signInWithDiscord() {
-  const clientId = process.env.DISCORD_CLIENT_ID, clientSecret = process.env.DISCORD_CLIENT_SECRET;
-  if (!clientId || !clientSecret) throw new Error('Defina DISCORD_CLIENT_ID e DISCORD_CLIENT_SECRET para ativar o login Discord.');
-  const auth = await receiveAuthorizationCode({ clientId, authorizationEndpoint: 'https://discord.com/oauth2/authorize', scope: 'identify email', redirectUri: process.env.DISCORD_REDIRECT_URI || 'http://127.0.0.1:8912/oauth/callback', extra: { prompt: 'consent' } });
-  const tokens = await fetch('https://discord.com/api/oauth2/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, code: auth.code, redirect_uri: auth.redirectUri, grant_type: 'authorization_code' }) }).then(async (response) => { const body = await response.json(); if (!response.ok) throw new Error(body.error_description || 'Não foi possível concluir o login.'); return body; });
-  return { provider: 'discord', token: tokens.access_token };
-}
 
 app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_contents, permission, callback) => callback(['media', 'display-capture'].includes(permission)));
-  ipcMain.handle('auth:discord', signInWithDiscord);
+  ipcMain.handle('auth:discord', (_event, serverUrl) => signInWithDiscord(serverUrl));
   ipcMain.handle('window:mode', (_event, mode) => { if (!mainWindow) return; const home = mode === 'home'; mainWindow.setResizable(home); mainWindow.setMinimumSize(home ? 760 : 360, home ? 560 : 410); mainWindow.setSize(home ? 960 : compactBounds.width, home ? 650 : compactBounds.height); mainWindow.center(); });
   createWindow(); app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });

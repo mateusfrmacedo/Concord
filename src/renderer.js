@@ -2,7 +2,7 @@ const $ = (id) => document.getElementById(id);
 const loginScreen = $('loginScreen'), homeScreen = $('homeScreen'), roomScreen = $('roomScreen');
 const state = $('connectionState'), roomCode = $('roomCode'), roomCodeTop = $('copyRoomCode');
 const remoteVideo = $('remoteVideo'), localPreview = $('localPreview'), emptyStage = $('emptyStage'), emptyTitle = $('emptyTitle'), streamBar = $('streamBar');
-let socket, peer, localStream, currentRoom, isHost = false, queuedCandidates = [], authToken, authProvider, friendState;
+let socket, peer, localStream, currentRoom, isHost = false, queuedCandidates = [], authToken, friendState;
 
 function setState(message, kind = '') { state.textContent = message; state.className = `connection-state ${kind}`; }
 function makeRoomCode() { return crypto.getRandomValues(new Uint32Array(1))[0].toString(36).slice(0, 6).toUpperCase(); }
@@ -11,7 +11,7 @@ function serverUrl() { return $('homeServerUrl').value.trim().replace(/\/$/, '')
 function escape(value = '') { return String(value).replace(/[&<>"']/g, (character) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[character]); }
 function avatar(user, className = 'friend-avatar') { return `<img class="${className}" src="${escape(user.picture || '')}" alt="" />`; }
 async function api(path, options = {}) {
-  const response = await fetch(`${serverUrl()}${path}`, { ...options, headers: { authorization: `Bearer ${authToken}`, 'x-auth-provider': authProvider, 'content-type': 'application/json', ...(options.headers || {}) } });
+  const response = await fetch(`${serverUrl()}${path}`, { ...options, headers: { authorization: `Bearer ${authToken}`, 'content-type': 'application/json', ...(options.headers || {}) } });
   const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Não foi possível concluir a ação.'); return data;
 }
 function syncServerUrl(source) { const target = source === $('serverUrl') ? $('homeServerUrl') : $('serverUrl'); target.value = source.value; }
@@ -25,7 +25,7 @@ function renderFriends(data) {
 async function enterHome() { renderFriends(await api('/api/me', { method: 'POST', body: '{}' })); loginScreen.classList.add('hidden'); homeScreen.classList.remove('hidden'); await window.desktop.setWindowMode('home'); }
 async function oauthLogin() {
   const button = $('discordLogin'); button.disabled = true; $('loginStatus').textContent = 'Abrindo navegador…';
-  try { const result = await window.desktop.signInWithDiscord(); authToken = result.token; authProvider = result.provider; await enterHome(); }
+  try { const result = await window.desktop.signInWithDiscord(serverUrl()); authToken = result.token; await enterHome(); }
   catch (error) { $('loginStatus').textContent = error.message; }
   finally { button.disabled = false; }
 }
@@ -65,7 +65,7 @@ function leaveRoom() { stopShare(); socket?.disconnect(); socket = undefined; pe
 
 $('discordLogin').addEventListener('click', oauthLogin);
 $('serverUrl').addEventListener('input', (event) => syncServerUrl(event.target)); $('homeServerUrl').addEventListener('input', (event) => syncServerUrl(event.target));
-$('signOut').addEventListener('click', async () => { authToken = undefined; authProvider = undefined; friendState = undefined; homeScreen.classList.add('hidden'); loginScreen.classList.remove('hidden'); $('loginStatus').textContent = ''; await window.desktop.setWindowMode('login'); });
+$('signOut').addEventListener('click', async () => { authToken = undefined; friendState = undefined; homeScreen.classList.add('hidden'); loginScreen.classList.remove('hidden'); $('loginStatus').textContent = ''; await window.desktop.setWindowMode('login'); });
 $('friendSearch').addEventListener('submit', async (event) => { event.preventDefault(); const query = $('friendQuery').value.trim(); if (!query) return; try { const { users } = await api(`/api/users?q=${encodeURIComponent(query)}`); const results = $('searchResults'); results.classList.remove('hidden'); results.innerHTML = users.length ? users.map((user) => `<div class="result">${avatar(user)}<div><strong>${escape(user.name)}</strong><small>${escape(user.email)}</small></div><button data-user="${escape(user.id)}">Adicionar</button></div>`).join('') : '<p class="empty-list">Nenhum resultado.</p>'; results.querySelectorAll('[data-user]').forEach((button) => button.addEventListener('click', async () => { try { await api('/api/friends/request', { method: 'POST', body: JSON.stringify({ userId: button.dataset.user }) }); toast('Pedido enviado.'); button.textContent = 'Enviado'; button.disabled = true; } catch (error) { toast(error.message); } })); } catch (error) { toast(error.message); } });
 $('createRoom').addEventListener('click', () => connectToRoom(makeRoomCode(), true)); $('startShare').addEventListener('click', startShare); $('stopShare').addEventListener('click', stopShare); $('leaveRoom').addEventListener('click', leaveRoom);
 [$('copyRoomCode'), $('copyRoomCodeLarge')].forEach((button) => button.addEventListener('click', async () => { await navigator.clipboard.writeText(currentRoom); toast('Código copiado.'); }));

@@ -1,5 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('desktop', {
-  signInWithDiscord: () => ipcRenderer.invoke('auth:discord'),
+  signInWithDiscord: (serverUrl) => ipcRenderer.invoke('auth:discord', serverUrl),
   setWindowMode: (mode) => ipcRenderer.invoke('window:mode', mode)
 });
