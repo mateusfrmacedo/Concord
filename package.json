@@ -1,5 +1,5 @@
 {
-  "name": "concord",
+  "name": "screen-share",
   "version": "0.1.0",
   "description": "Compartilhamento de tela com amigos.",
   "main": "src/main.js",
@@ -12,8 +12,7 @@
   },
   "devDependencies": {
     "electron": "^35.1.5",
-    "electron-builder": "^26.0.12",
-    "png-to-ico": "^3.0.2"
+    "electron-builder": "^26.0.12"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
@@ -21,21 +20,18 @@
     "socket.io-client": "^4.8.1"
   },
   "build": {
-    "appId": "com.concord.app",
-    "productName": "Concord",
+    "appId": "com.screenshare.app",
+    "productName": "Screen Share",
     "files": [
       "src/**/*",
-      "icon.png",
       "server.js",
       "package.json"
     ],
     "mac": {
-      "category": "public.app-category.social-networking",
-      "icon": "build/icon.icns"
+      "category": "public.app-category.social-networking"
     },
     "win": {
-      "target": "nsis",
-      "icon": "build/icon.ico"
+      "target": "nsis"
     }
   }
 }

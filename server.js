@@ -5,8 +5,8 @@ const { dirname, join } = require('node:path');
 const { Server } = require('socket.io');
 
 const port = Number(process.env.PORT || 3000);
-const clientId = process.env.GOOGLE_CLIENT_ID;
-const dataFile = process.env.CONCORD_DATA_FILE || join(process.cwd(), 'data', 'concord.json');
+const googleClientId = process.env.GOOGLE_CLIENT_ID;
+const dataFile = process.env.SCREEN_SHARE_DATA_FILE || join(process.cwd(), 'data', 'users.json');
 const httpServer = createServer(route);
 const io = new Server(httpServer, { cors: { origin: '*' } });
 
@@ -17,14 +17,25 @@ function readDatabase() {
 function writeDatabase(data) { mkdirSync(dirname(dataFile), { recursive: true }); writeFileSync(dataFile, JSON.stringify(data, null, 2)); }
 function json(response, status, data) { response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*' }); response.end(JSON.stringify(data)); }
 async function body(request) { const chunks = []; for await (const chunk of request) chunks.push(chunk); return JSON.parse(Buffer.concat(chunks).toString() || '{}'); }
-async function googleUser(request) {
-  if (!clientId) throw new Error('GOOGLE_CLIENT_ID não está configurado no servidor.');
+async function authenticatedUser(request) {
+  const provider = request.headers['x-auth-provider'];
   const token = request.headers.authorization?.replace(/^Bearer\s+/i, '');
   if (!token) throw new Error('Login necessário.');
-  const response = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(token)}`);
-  const identity = await response.json();
-  if (!response.ok || identity.aud !== clientId || !identity.sub) throw new Error('Sessão Google inválida.');
-  return { id: identity.sub, name: identity.name || identity.email, email: identity.email, picture: identity.picture || '' };
+  if (provider === 'google') {
+    if (!googleClientId) throw new Error('GOOGLE_CLIENT_ID não está configurado no servidor.');
+    const response = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(token)}`);
+    const identity = await response.json();
+    if (!response.ok || identity.aud !== googleClientId || !identity.sub) throw new Error('Sessão Google inválida.');
+    return { id: `google:${identity.sub}`, name: identity.name || identity.email, email: identity.email, picture: identity.picture || '' };
+  }
+  if (provider === 'discord') {
+    const response = await fetch('https://discord.com/api/v10/users/@me', { headers: { authorization: `Bearer ${token}` } });
+    const identity = await response.json();
+    if (!response.ok || !identity.id) throw new Error('Sessão Discord inválida.');
+    const picture = identity.avatar ? `https://cdn.discordapp.com/avatars/${identity.id}/${identity.avatar}.png?size=128` : '';
+    return { id: `discord:${identity.id}`, name: identity.global_name || identity.username, email: identity.email || identity.username, picture };
+  }
+  throw new Error('Provedor de login inválido.');
 }
 function ensureUser(data, user) {
   const current = data.users[user.id] || { ...user, friends: [], incoming: [] };
@@ -38,7 +49,7 @@ async function route(request, response) {
   if (request.method === 'OPTIONS') { response.writeHead(204, { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization, content-type', 'access-control-allow-methods': 'GET, POST, OPTIONS' }).end(); return; }
   if (!request.url.startsWith('/api/')) return json(response, 404, { error: 'Not found' });
   try {
-    const user = await googleUser(request); const data = readDatabase(); const current = ensureUser(data, user);
+    const user = await authenticatedUser(request); const data = readDatabase(); const current = ensureUser(data, user);
     if (request.method === 'POST' && request.url === '/api/me') { writeDatabase(data); return json(response, 200, friendData(data, current)); }
     if (request.method === 'GET' && request.url.startsWith('/api/users')) {
       const query = new URL(request.url, `http://localhost:${port}`).searchParams.get('q')?.toLowerCase().trim() || '';
@@ -65,4 +76,4 @@ io.on('connection', (socket) => {
   socket.on('signal', ({ room, data }) => socket.to(room).emit('signal', { data }));
   socket.on('disconnect', () => { if (socket.data.room) socket.to(socket.data.room).emit('peer-left'); });
 });
-httpServer.listen(port, () => console.log(`Concord server listening on :${port}`));
+httpServer.listen(port, () => console.log(`Screen sharing server listening on :${port}`));
