@@ -17,11 +17,11 @@ jobs:
         include:
           - name: macOS universal
             os: macos-latest
-            command: npm run dist -- --mac --universal
+            command: npm run dist -- --mac --universal --publish never
             artifact: macos-installers
           - name: Windows x64
             os: windows-latest
-            command: npm run dist -- --win --x64
+            command: npm run dist -- --win --x64 --publish never
             artifact: windows-installers
     runs-on: ${{ matrix.os }}
     steps:

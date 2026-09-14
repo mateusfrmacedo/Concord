@@ -1,6 +1,6 @@
 {
   "name": "screen-share",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Compartilhamento de tela com amigos.",
   "main": "src/main.js",
   "scripts": {
