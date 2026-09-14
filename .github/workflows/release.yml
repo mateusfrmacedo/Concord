@@ -52,5 +52,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mapfile -d '' assets < <(find release-assets -type f -print0)
+          mapfile -d '' assets < <(find release-assets -mindepth 2 -maxdepth 2 -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' \) -print0)
           gh release create "${GITHUB_REF_NAME}" "${assets[@]}" --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" --generate-notes
