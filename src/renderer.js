@@ -23,11 +23,11 @@ function renderFriends(data) {
   requests.querySelectorAll('[data-accept]').forEach((button) => button.addEventListener('click', async () => { try { renderFriends(await api('/api/friends/accept', { method: 'POST', body: JSON.stringify({ userId: button.dataset.accept }) })); } catch (error) { toast(error.message); } }));
 }
 async function enterHome() { renderFriends(await api('/api/me', { method: 'POST', body: '{}' })); loginScreen.classList.add('hidden'); homeScreen.classList.remove('hidden'); await window.desktop.setWindowMode('home'); }
-async function oauthLogin(provider) {
-  const buttons = [$('googleLogin'), $('discordLogin')]; buttons.forEach((button) => { button.disabled = true; }); $('loginStatus').textContent = 'Abrindo navegador…';
-  try { const result = provider === 'google' ? await window.desktop.signInWithGoogle() : await window.desktop.signInWithDiscord(); authToken = result.token; authProvider = result.provider; await enterHome(); }
+async function oauthLogin() {
+  const button = $('discordLogin'); button.disabled = true; $('loginStatus').textContent = 'Abrindo navegador…';
+  try { const result = await window.desktop.signInWithDiscord(); authToken = result.token; authProvider = result.provider; await enterHome(); }
   catch (error) { $('loginStatus').textContent = error.message; }
-  finally { buttons.forEach((button) => { button.disabled = false; }); }
+  finally { button.disabled = false; }
 }
 function showRoom() {
   homeScreen.classList.add('hidden'); roomScreen.classList.remove('hidden'); roomCode.textContent = currentRoom; roomCodeTop.textContent = currentRoom;
@@ -63,7 +63,7 @@ async function startShare() {
 function stopShare() { localStream?.getTracks().forEach((track) => track.stop()); localStream = undefined; peer?.getSenders().filter((sender) => sender.track).forEach((sender) => peer.removeTrack(sender)); createOffer().catch(() => {}); localPreview.srcObject = null; localPreview.style.display = 'none'; streamBar.classList.add('hidden'); $('startShare').classList.remove('hidden'); $('stopShare').classList.add('hidden'); emptyStage.classList.remove('hidden'); emptyTitle.textContent = 'Encerrado'; }
 function leaveRoom() { stopShare(); socket?.disconnect(); socket = undefined; peer?.close(); peer = undefined; remoteVideo.srcObject = null; roomScreen.classList.add('hidden'); homeScreen.classList.remove('hidden'); }
 
-$('googleLogin').addEventListener('click', () => oauthLogin('google')); $('discordLogin').addEventListener('click', () => oauthLogin('discord'));
+$('discordLogin').addEventListener('click', oauthLogin);
 $('serverUrl').addEventListener('input', (event) => syncServerUrl(event.target)); $('homeServerUrl').addEventListener('input', (event) => syncServerUrl(event.target));
 $('signOut').addEventListener('click', async () => { authToken = undefined; authProvider = undefined; friendState = undefined; homeScreen.classList.add('hidden'); loginScreen.classList.remove('hidden'); $('loginStatus').textContent = ''; await window.desktop.setWindowMode('login'); });
 $('friendSearch').addEventListener('submit', async (event) => { event.preventDefault(); const query = $('friendQuery').value.trim(); if (!query) return; try { const { users } = await api(`/api/users?q=${encodeURIComponent(query)}`); const results = $('searchResults'); results.classList.remove('hidden'); results.innerHTML = users.length ? users.map((user) => `<div class="result">${avatar(user)}<div><strong>${escape(user.name)}</strong><small>${escape(user.email)}</small></div><button data-user="${escape(user.id)}">Adicionar</button></div>`).join('') : '<p class="empty-list">Nenhum resultado.</p>'; results.querySelectorAll('[data-user]').forEach((button) => button.addEventListener('click', async () => { try { await api('/api/friends/request', { method: 'POST', body: JSON.stringify({ userId: button.dataset.user }) }); toast('Pedido enviado.'); button.textContent = 'Enviado'; button.disabled = true; } catch (error) { toast(error.message); } })); } catch (error) { toast(error.message); } });

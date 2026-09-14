@@ -5,7 +5,6 @@ const { dirname, join } = require('node:path');
 const { Server } = require('socket.io');
 
 const port = Number(process.env.PORT || 3000);
-const googleClientId = process.env.GOOGLE_CLIENT_ID;
 const dataFile = process.env.SCREEN_SHARE_DATA_FILE || join(process.cwd(), 'data', 'users.json');
 const httpServer = createServer(route);
 const io = new Server(httpServer, { cors: { origin: '*' } });
@@ -21,13 +20,6 @@ async function authenticatedUser(request) {
   const provider = request.headers['x-auth-provider'];
   const token = request.headers.authorization?.replace(/^Bearer\s+/i, '');
   if (!token) throw new Error('Login necessário.');
-  if (provider === 'google') {
-    if (!googleClientId) throw new Error('GOOGLE_CLIENT_ID não está configurado no servidor.');
-    const response = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(token)}`);
-    const identity = await response.json();
-    if (!response.ok || identity.aud !== googleClientId || !identity.sub) throw new Error('Sessão Google inválida.');
-    return { id: `google:${identity.sub}`, name: identity.name || identity.email, email: identity.email, picture: identity.picture || '' };
-  }
   if (provider === 'discord') {
     const response = await fetch('https://discord.com/api/v10/users/@me', { headers: { authorization: `Bearer ${token}` } });
     const identity = await response.json();

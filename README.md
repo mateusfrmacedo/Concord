@@ -4,7 +4,7 @@ Aplicativo desktop para compartilhar uma tela entre amigos usando WebRTC.
 
 ## Executar localmente
 
-Crie credenciais OAuth no Google Cloud e/ou no Discord Developer Portal. Copie `.env.example` para `.env`, informe as credenciais que deseja usar e inicie o servidor:
+Crie uma aplicação OAuth no Discord Developer Portal. Copie `.env.example` para `.env`, informe as credenciais do Discord e inicie o servidor:
 
 Para Discord, cadastre `http://127.0.0.1:8912/oauth/callback` como Redirect URL no Developer Portal.
 
