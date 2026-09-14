@@ -11,6 +11,7 @@ const discordClientSecret = process.env.DISCORD_CLIENT_SECRET;
 const dataFile = process.env.SCREEN_SHARE_DATA_FILE || join(process.cwd(), 'data', 'users.json');
 const oauthAttempts = new Map();
 const oauthTickets = new Map();
+const onlineSockets = new Map();
 const httpServer = createServer(route);
 const io = new Server(httpServer, { cors: { origin: '*' } });
 
@@ -28,16 +29,15 @@ function localReturnUrl(value) { try { const url = new URL(value); return url.pr
 async function authenticatedUser(request) {
   const token = request.headers.authorization?.replace(/^Bearer\s+/i, '');
   if (!token) throw new Error('Login necessário.');
-  const data = readDatabase(); const session = data.sessions[token];
-  if (!session || session.expiresAt <= Date.now() || !data.users[session.userId]) throw new Error('Sessão inválida.');
-  return data.users[session.userId];
+  return userForSession(token);
 }
+function userForSession(sessionToken) { const data = readDatabase(); const session = data.sessions[sessionToken]; if (!session || session.expiresAt <= Date.now() || !data.users[session.userId]) throw new Error('Sessão inválida.'); return data.users[session.userId]; }
 function ensureUser(data, user) {
   const current = data.users[user.id] || { ...user, friends: [], incoming: [] };
   data.users[user.id] = { ...current, ...user, friends: current.friends || [], incoming: current.incoming || [] };
   return data.users[user.id];
 }
-function publicUser(user) { return { id: user.id, name: user.name, email: user.email, picture: user.picture }; }
+function publicUser(user) { return { id: user.id, name: user.name, email: user.email, picture: user.picture, online: onlineSockets.has(user.id) }; }
 function friendData(data, user) { return { profile: publicUser(user), friends: user.friends.map((id) => data.users[id]).filter(Boolean).map(publicUser), incoming: user.incoming.map((id) => data.users[id]).filter(Boolean).map(publicUser) }; }
 
 async function route(request, response) {
@@ -104,9 +104,29 @@ async function route(request, response) {
   } catch (error) { json(response, /necessário|inválida/.test(error.message) ? 401 : 503, { error: error.message }); }
 }
 
+function broadcastPresence(userId, online) { io.emit('presence-update', { userId, online }); }
+function leaveRoom(socket) { if (!socket.data.room) return; const room = socket.data.room; socket.leave(room); socket.to(room).emit('peer-left'); delete socket.data.room; }
+io.use((socket, next) => {
+  try { socket.data.user = userForSession(socket.handshake.auth?.token); next(); } catch { next(new Error('unauthorized')); }
+});
 io.on('connection', (socket) => {
-  socket.on('join-room', ({ room, role }) => { if ((io.sockets.adapter.rooms.get(room)?.size || 0) >= 2) return socket.emit('room-full'); socket.join(room); socket.data.room = room; socket.data.role = role; socket.to(room).emit('peer-joined', { role }); });
-  socket.on('signal', ({ room, data }) => socket.to(room).emit('signal', { data }));
-  socket.on('disconnect', () => { if (socket.data.room) socket.to(socket.data.room).emit('peer-left'); });
+  const userId = socket.data.user.id; const sockets = onlineSockets.get(userId) || new Set(); const wasOffline = sockets.size === 0;
+  sockets.add(socket.id); onlineSockets.set(userId, sockets); if (wasOffline) broadcastPresence(userId, true);
+  socket.on('join-room', ({ room, role }) => {
+    if (!room || !['host', 'viewer'].includes(role)) return; leaveRoom(socket);
+    if ((io.sockets.adapter.rooms.get(room)?.size || 0) >= 2) return socket.emit('room-full');
+    socket.join(room); socket.data.room = room; socket.to(room).emit('peer-joined', { role });
+  });
+  socket.on('leave-room', () => leaveRoom(socket));
+  socket.on('signal', ({ room, data }) => { if (room && socket.data.room === room) socket.to(room).emit('signal', { data }); });
+  socket.on('invite', ({ targetUserId, room }) => {
+    const data = readDatabase(); const sender = data.users[userId]; const recipient = data.users[targetUserId];
+    if (!room || !recipient || !sender?.friends?.includes(targetUserId)) return socket.emit('invite-error', 'Não foi possível convidar este amigo.');
+    for (const socketId of onlineSockets.get(targetUserId) || []) io.to(socketId).emit('share-invite', { from: publicUser(sender), room });
+  });
+  socket.on('disconnect', () => {
+    leaveRoom(socket); const connected = onlineSockets.get(userId); connected?.delete(socket.id);
+    if (!connected?.size) { onlineSockets.delete(userId); broadcastPresence(userId, false); }
+  });
 });
 httpServer.listen(port, () => console.log(`Screen sharing server listening on :${port}`));

@@ -16,12 +16,13 @@ async function api(path, options = {}) {
 }
 function renderFriends(data) {
   friendState = data; $('accountPicture').src = data.profile.picture || ''; $('accountName').textContent = data.profile.name; $('accountEmail').textContent = data.profile.email;
-  const list = $('friends'); list.innerHTML = data.friends.length ? data.friends.map((friend) => `<div class="friend-row">${avatar(friend)}<div><strong>${escape(friend.name)}</strong><small>${escape(friend.email)}</small></div></div>`).join('') : '<p class="empty-list">Nenhum amigo ainda.</p>';
+  const list = $('friends'); list.innerHTML = data.friends.length ? data.friends.map((friend) => `<div class="friend-row">${avatar(friend)}<div><strong>${escape(friend.name)}</strong><small>${friend.online ? 'Online' : 'Offline'}</small></div><button class="share-friend" data-share="${escape(friend.id)}" ${friend.online ? '' : 'disabled'}>${friend.online ? 'Compartilhar' : 'Offline'}</button></div>`).join('') : '<p class="empty-list">Nenhum amigo ainda.</p>';
+  list.querySelectorAll('[data-share]').forEach((button) => button.addEventListener('click', () => { const friend = friendState.friends.find((item) => item.id === button.dataset.share); if (!friend?.online) return toast('Este amigo está offline.'); const room = makeRoomCode(); connectToRoom(room, true); socket.emit('invite', { targetUserId: friend.id, room }); }));
   const requests = $('requests'); $('requestsSection').classList.toggle('hidden', !data.incoming.length);
   requests.innerHTML = data.incoming.map((friend) => `<div class="request-row">${avatar(friend)}<div><strong>${escape(friend.name)}</strong><small>${escape(friend.email)}</small></div><button data-accept="${escape(friend.id)}">Aceitar</button></div>`).join('');
   requests.querySelectorAll('[data-accept]').forEach((button) => button.addEventListener('click', async () => { try { renderFriends(await api('/api/friends/accept', { method: 'POST', body: JSON.stringify({ userId: button.dataset.accept }) })); } catch (error) { toast(error.message); } }));
 }
-async function enterHome() { renderFriends(await api('/api/me', { method: 'POST', body: '{}' })); loginScreen.classList.add('hidden'); homeScreen.classList.remove('hidden'); await window.desktop.setWindowMode('home'); }
+async function enterHome() { renderFriends(await api('/api/me', { method: 'POST', body: '{}' })); connectSocket(); loginScreen.classList.add('hidden'); homeScreen.classList.remove('hidden'); await window.desktop.setWindowMode('home'); }
 async function oauthLogin() {
   const button = $('discordLogin'); button.disabled = true; $('loginStatus').textContent = 'Abrindo navegador…';
   try { const result = await window.desktop.signInWithDiscord(serverUrl()); authToken = result.token; await enterHome(); }
@@ -32,15 +33,22 @@ function showRoom() {
   homeScreen.classList.add('hidden'); roomScreen.classList.remove('hidden'); roomCode.textContent = currentRoom; roomCodeTop.textContent = currentRoom;
   $('hostControls').classList.toggle('hidden', !isHost); $('viewerNote').classList.toggle('hidden', isHost); emptyTitle.textContent = isHost ? 'Pronto para compartilhar' : 'Aguardando'; window.desktop.setWindowMode('home');
 }
-function connectToRoom(room, host) {
-  if (!serverUrl()) return toast('Servidor indisponível.'); currentRoom = room; isHost = host; showRoom(); setState('Conectando');
-  socket = io(serverUrl(), { transports: ['websocket'] });
-  socket.on('connect', () => { socket.emit('join-room', { room, role: host ? 'host' : 'viewer' }); setState('Na sala', 'ready'); });
+function joinCurrentRoom() { if (socket?.connected && currentRoom) { socket.emit('join-room', { room: currentRoom, role: isHost ? 'host' : 'viewer' }); setState('Na sala', 'ready'); } }
+function connectSocket() {
+  socket?.disconnect(); socket = io(serverUrl(), { transports: ['websocket'], auth: { token: authToken } });
+  socket.on('connect', joinCurrentRoom);
   socket.on('connect_error', () => setState('Servidor indisponível', 'error'));
   socket.on('room-full', () => { toast('Esta sala já está cheia.'); leaveRoom(); });
   socket.on('peer-joined', async () => { if (isHost) { await ensurePeer(); await createOffer(); } });
   socket.on('peer-left', () => { peer?.close(); peer = undefined; queuedCandidates = []; remoteVideo.srcObject = null; if (!localStream) emptyStage.classList.remove('hidden'); toast('A outra pessoa saiu.'); });
   socket.on('signal', handleSignal);
+  socket.on('presence-update', ({ userId, online }) => { if (!friendState) return; const friend = friendState.friends.find((item) => item.id === userId); if (friend) { friend.online = online; renderFriends(friendState); } });
+  socket.on('share-invite', ({ from, room }) => { if (window.confirm(`${from.name} quer compartilhar a tela com você. Aceitar?`)) connectToRoom(room, false); });
+  socket.on('invite-error', toast);
+}
+function connectToRoom(room, host) {
+  if (!serverUrl()) return toast('Servidor indisponível.'); currentRoom = room; isHost = host; showRoom(); setState('Conectando');
+  if (!socket) connectSocket(); else joinCurrentRoom();
 }
 async function ensurePeer() {
   if (peer) return peer;
@@ -60,10 +68,10 @@ async function startShare() {
   catch (error) { if (error.name !== 'NotAllowedError') toast('Não foi possível compartilhar a tela.'); }
 }
 function stopShare() { localStream?.getTracks().forEach((track) => track.stop()); localStream = undefined; peer?.getSenders().filter((sender) => sender.track).forEach((sender) => peer.removeTrack(sender)); createOffer().catch(() => {}); localPreview.srcObject = null; localPreview.style.display = 'none'; streamBar.classList.add('hidden'); $('startShare').classList.remove('hidden'); $('stopShare').classList.add('hidden'); emptyStage.classList.remove('hidden'); emptyTitle.textContent = 'Encerrado'; }
-function leaveRoom() { stopShare(); socket?.disconnect(); socket = undefined; peer?.close(); peer = undefined; remoteVideo.srcObject = null; roomScreen.classList.add('hidden'); homeScreen.classList.remove('hidden'); }
+function leaveRoom() { stopShare(); socket?.emit('leave-room'); peer?.close(); peer = undefined; remoteVideo.srcObject = null; currentRoom = undefined; roomScreen.classList.add('hidden'); homeScreen.classList.remove('hidden'); }
 
 $('discordLogin').addEventListener('click', oauthLogin);
-$('signOut').addEventListener('click', async () => { authToken = undefined; friendState = undefined; homeScreen.classList.add('hidden'); loginScreen.classList.remove('hidden'); $('loginStatus').textContent = ''; await window.desktop.setWindowMode('login'); });
+$('signOut').addEventListener('click', async () => { socket?.disconnect(); socket = undefined; authToken = undefined; friendState = undefined; homeScreen.classList.add('hidden'); loginScreen.classList.remove('hidden'); $('loginStatus').textContent = ''; await window.desktop.setWindowMode('login'); });
 $('friendSearch').addEventListener('submit', async (event) => { event.preventDefault(); const query = $('friendQuery').value.trim(); if (!query) return; try { const { users } = await api(`/api/users?q=${encodeURIComponent(query)}`); const results = $('searchResults'); results.classList.remove('hidden'); results.innerHTML = users.length ? users.map((user) => `<div class="result">${avatar(user)}<div><strong>${escape(user.name)}</strong><small>${escape(user.email)}</small></div><button data-user="${escape(user.id)}">Adicionar</button></div>`).join('') : '<p class="empty-list">Nenhum resultado.</p>'; results.querySelectorAll('[data-user]').forEach((button) => button.addEventListener('click', async () => { try { await api('/api/friends/request', { method: 'POST', body: JSON.stringify({ userId: button.dataset.user }) }); toast('Pedido enviado.'); button.textContent = 'Enviado'; button.disabled = true; } catch (error) { toast(error.message); } })); } catch (error) { toast(error.message); } });
 $('createRoom').addEventListener('click', () => connectToRoom(makeRoomCode(), true)); $('startShare').addEventListener('click', startShare); $('stopShare').addEventListener('click', stopShare); $('leaveRoom').addEventListener('click', leaveRoom);
 [$('copyRoomCode'), $('copyRoomCodeLarge')].forEach((button) => button.addEventListener('click', async () => { await navigator.clipboard.writeText(currentRoom); toast('Código copiado.'); }));
